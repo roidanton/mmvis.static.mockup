@@ -6,6 +6,7 @@ using System.Linq;
 public class CreateEventObjects : MonoBehaviour {
 
 	public TextAsset listOfEvents;
+	public TextAsset listOfPolyhedrons;
 
 	public Material objectMaterial;
 
@@ -19,6 +20,7 @@ public class CreateEventObjects : MonoBehaviour {
 	public VisualAttribute häufung;
 
 	List<Event> eventList = new List<Event>();
+	List<string> polyList = new List<string>(); // List of Polyhedrons for generating shape from prefabs.
 
 	public float hueMin;
 	public float hueMax;
@@ -30,6 +32,8 @@ public class CreateEventObjects : MonoBehaviour {
 	public float scaleMax;
 
 	public float opazitätHäufung;
+
+	public int maxTime;
 
 	float deathHue = 0f;
 	float mergeHue = 55f;
@@ -48,35 +52,54 @@ public class CreateEventObjects : MonoBehaviour {
 	float TAMax;
 	float LAMin;
 	float LAMax;
-	
+
+
 	void Start () {
-		setEventList ();
+		loadEvents();
+		polyList = getPolyList();
+		updateItems();
 	}
 
 	void Update () {
 		if (Input.GetMouseButtonUp(0)) { // Cheat to simulate detection of param change.
-			foreach (GameObject o in GameObject.FindGameObjectsWithTag("Event"))
-				Destroy (o);
-			foreach (Event e in eventList) {
-				createEventMesh (e);
-			}
+			updateItems();
 		}
-
 		Controls.getKeys();
 	}
 
+	public void updateItems () {
+		foreach (GameObject o in GameObject.FindGameObjectsWithTag("Event"))
+			Destroy (o);
+		foreach (Event e in eventList) {
+			createEventMesh (e);
+		}
+	}
+
+	public void loadEvents() {
+		eventList = getEventList();
+		calculateEventListAttributes();
+		updateItems();
+	}
+
+	public void makeNewEvents () {
+		eventList = createRandomEventList((int) GameObject.Find ("NumberOfEventsSlider").GetComponent<UnityEngine.UI.Slider>().value, maxTime);
+		calculateEventListAttributes();
+		updateItems();
+	}
+
 	void createEventMesh(Event e) {
-		GameObject eventObject = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+		GameObject eventObject = getObject(e);
 		//eventObject.name = "Event " + e.id.ToString() + ": " + e.eventType.ToString() + " at " + e.location.ToString() + " on time " + e.time.ToString();
-		eventObject.transform.position = getPosition (e);
+		eventObject.transform.position = getPosition(e);
 		eventObject.transform.localScale = getScale(e);
 
-		addShape (e, eventObject);
+		eventObject.GetComponent<Renderer> ().sharedMaterial = new Material(Shader.Find("Standard"));
 
-		Material material = eventObject.GetComponent<Renderer> ().material;
+		Material material = eventObject.GetComponent<Renderer> ().sharedMaterial;
 
-		// Might not work when project gets exported!
+		// Might not always work when project gets exported.
 		// see http://forum.unity3d.com/threads/access-rendering-mode-var-on-standard-shader-via-scripting.287002/
+		// Verdeckungsbug, Ursache unbekannt.
 		material.SetFloat("_Mode", 2);
 		material.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
 		material.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
@@ -89,35 +112,24 @@ public class CreateEventObjects : MonoBehaviour {
 		// Does not seem to work like that, but maybe the way to go if method above does not work anymore.
 		//eventObject.GetComponent<Renderer> ().material.CopyPropertiesFromMaterial (objectMaterial);
 
-		material.color = getColor (e);
+		material.color = getColor(e);
 
-		eventObject.name = e.eventType.ToString() + " at " + e.location.ToString() + " on time " + e.time.ToString() + ": " + eventObject.GetComponent<Renderer> ().material.color.ToString();
+		eventObject.name = e.eventType.ToString() + " at " + e.location.ToString() + " on time " + e.time.ToString() + ": " + eventObject.GetComponent<Renderer> ().sharedMaterial.color.ToString();
 		eventObject.tag = "Event";
 	}
 
 	/**
-	 * Defines a shape by adding Cylinders.
-	 * Location x min, max are used for shape min, max.
+	 * Creates a polyhedron or sphere shape.
+	 * 
+	 * Currently there is only a list of polyhedrons.
+	 * On-the-fly polyhedron creation would be awesome.
 	 */
-	void addShape (Event e, GameObject parent) {
-		/*
-		Vector3[] newVertices;
-		Vector2[] newUV;
-		int[] newTriangles;
-
-		Mesh mesh = new Mesh();
-		parent.GetComponent<MeshFilter>().mesh = mesh;
-		mesh.vertices = newVertices;
-		mesh.uv = newUV;
-		mesh.triangles = newTriangles;
-*/
-		float numberOfCorners = getAttributeValue(e, VisualAttribute.Form, locXMin, locXMax, 0f);
-
-		for (int i = 0; i < (int) numberOfCorners; i++) {
-			GameObject corner = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-			corner.transform.parent = parent.transform;
-			transform.localPosition = new Vector3(i, 1, 0);
-		}
+	GameObject getObject (Event e) {
+		int shapeIndex = (int) getAttributeValue(e, VisualAttribute.Form, 0f, polyList.Count()-1f, 1000f);
+		if (shapeIndex != 1000f)
+			return Instantiate(Resources.Load (polyList [shapeIndex], typeof(GameObject))) as GameObject;
+		else
+			return GameObject.CreatePrimitive(PrimitiveType.Sphere);
 	}
 
 	/**
@@ -126,7 +138,7 @@ public class CreateEventObjects : MonoBehaviour {
 	Vector3 getPosition (Event e) {
 		float x = getAttributeValue(e, VisualAttribute.PosX, locXMin, locXMax, 0f);
 		float y = getAttributeValue(e, VisualAttribute.PosY, locYMin, locYMax, 0f);
-		float z = getAttributeValue(e, VisualAttribute.PosY, locZMin, locZMax, 0f);
+		float z = getAttributeValue(e, VisualAttribute.PosZ, locZMin, locZMax, 0f);
 
 		return new Vector3(x, y, z);
 	}
@@ -151,7 +163,8 @@ public class CreateEventObjects : MonoBehaviour {
 	 * Uses linear approximation to determine attribute values, except when:
 	 * - Art = Farbwert
 	 * - Häufung = Opacity
-	 * @Return: defaultValue if nothing was set.
+	 * @Return: defaultValue if nothing was set. Sometimes used as detection
+	 * in calling funtion (bad style).
 	 */
 	float getAttributeValue (Event e, VisualAttribute visAttr, float aMin, float aMax, float defaultValue) {
 		if (zeit == visAttr)
@@ -204,25 +217,58 @@ public class CreateEventObjects : MonoBehaviour {
 		//print ("aMin: " + aMin + ", aMax: " + aMax + ", pMin: " + pMin + ", pMax: " + pMax + ", n: " + n + ", m: " + m);
 		return m * p + n;
 	}
-	
-	void setEventList() {
+
+	List<string> getPolyList() {
+		List<string> polyList = new List<string> ();
+		string[,] listOfPolysGrid = CSVReader.SplitCsvGrid (listOfPolyhedrons.text); //CSVReader.DebugOutputGrid(listOfEventsGrid);
+		
+		for (int row = 0; row < listOfPolysGrid.GetUpperBound(1); row++) {
+			string polyhedron = listOfPolysGrid[0,row];
+			polyList.Add(polyhedron);
+		}
+		return polyList;
+	}
+
+	List<Event> createRandomEventList(int numberOfEvents, float maxTime) {
+		List<Event> eventList = new List<Event> ();
+		float maxRadius = 10f;
+		
+		for (int i = 0; i < numberOfEvents; i++) {
+			float progress = (float) i/(float) numberOfEvents;
+			Event e = new Event ();
+			e.id = i+1;
+			e.time = Random.Range(0f + progress * maxTime/2, 1f + progress * maxTime);
+			e.location.Set(Mathf.Floor(e.time*4f/3f + .5f), Random.Range(0f, maxRadius), Random.Range(0f, maxRadius));
+			e.eventType = (Event.EventType) Random.Range(0f, 3f);
+			eventList.Add(e);
+		}
+		return eventList;
+	}
+
+	List<Event> getEventList() {
+		List<Event> eventList = new List<Event> ();
 		string[,] listOfEventsGrid = CSVReader.SplitCsvGrid (listOfEvents.text); //CSVReader.DebugOutputGrid(listOfEventsGrid);
 		
 		for (int row = 0; row < listOfEventsGrid.GetUpperBound(1); row++) {
 			Event e = new Event ();
-			e.id = int.Parse(listOfEventsGrid[0,row]);
-			e.time = float.Parse(listOfEventsGrid[1,row]);
-			e.location.Set(float.Parse(listOfEventsGrid[2,row]), float.Parse(listOfEventsGrid[3,row]), 0);
-			e.setEventType(listOfEventsGrid[4,row]);
-			eventList.Add(e);
+			e.id = int.Parse (listOfEventsGrid [0, row]);
+			e.time = float.Parse (listOfEventsGrid [1, row]);
+			e.location.Set (float.Parse (listOfEventsGrid [2, row]), float.Parse (listOfEventsGrid [3, row]), float.Parse (listOfEventsGrid [4, row]));
+			e.setEventType (listOfEventsGrid [5, row]);
+			eventList.Add (e);
 		}
+		return eventList;
+	}
 
+	void calculateEventListAttributes() {
 		eventList.setLocationAgglomeration ();
 		eventList.setTemporalAgglomeration ();
 		
 		timeMin = eventList.getMinTime();
 		timeMax = eventList.getMaxTime();
-		
+
+		print ("Time: (" + timeMin + ", " + timeMax + ")");
+
 		TAMin = eventList.getMinTA();
 		TAMax = eventList.getMaxTA();
 		LAMin = eventList.getMinLA();

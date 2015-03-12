@@ -45,22 +45,20 @@ public class CSVReader : MonoBehaviour {
 	}
 	
 	// splits a CSV file into a 2D string array
-	static public string[,] SplitCsvGrid(string csvText)
-	{
+	static public string[,] SplitCsvGrid(string csvText) {
 		string[] lines = csvText.Split("\n"[0]); 
 		
 		// finds the max width of row
-		int width = 0; 
-		for (int i = 0; i < lines.Length; i++)
-		{
+		int width = 0;
+		for (int i = 0; i < lines.Length; i++) {
 			string[] row = SplitCsvLine( lines[i] ); 
 			width = Mathf.Max(width, row.Length); 
 		}
 		
 		// creates new 2D string grid to output to
 		string[,] outputGrid = new string[width + 1, lines.Length + 1]; 
-		for (int y = 0; y < lines.Length; y++)
-		{
+		for (int y = 0; y < lines.Length; y++) {
+			print (lines.Length);
 			string[] row = SplitCsvLine( lines[y] ); 
 			for (int x = 0; x < row.Length; x++) {
 
